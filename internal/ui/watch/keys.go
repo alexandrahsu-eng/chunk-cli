@@ -13,9 +13,16 @@ type keyMap struct {
 	Up, Down    key.Binding
 	Left, Right key.Binding
 	Open        key.Binding
-	Copy        key.Binding
-	Toggle      key.Binding
-	Search      key.Binding
+	// OpenPR opens the run's pull request from anywhere in the run pane. It is
+	// not listed in the footer: on the pull request row Open's hint names it.
+	OpenPR key.Binding
+	Copy   key.Binding
+	// CopyBranch and CopyPR copy the run's branch name and pull request URL
+	// from anywhere, so neither needs the cursor on its row. CopyPR goes
+	// unlisted: CopyBranch's hint names both.
+	CopyBranch, CopyPR key.Binding
+	Toggle             key.Binding
+	Search             key.Binding
 	// Keep and Clear end a search: Enter keeps its filter, Esc drops it.
 	Keep, Clear key.Binding
 	Details     key.Binding
@@ -33,29 +40,52 @@ func (m Model) keys() keyMap {
 	run := m.selectedRun()
 	right := m.focusedPane == paneRight
 	k := keyMap{
-		Up:        key.NewBinding(key.WithKeys("up", "k", "w"), key.WithHelp("↑/↓", "select")),
-		Down:      key.NewBinding(key.WithKeys("down", "j", "s")),
-		Left:      key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←", "back")),
-		Right:     key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→", "details")),
-		Open:      key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "output")),
-		Copy:      key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "copy failure")),
-		Toggle:    key.NewBinding(key.WithKeys("space"), key.WithHelp("Space", "toggle")),
-		Search:    key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search runs")),
-		Keep:      key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "keep filter")),
-		Clear:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "clear")),
-		Details:   key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "infra")),
-		Cancel:    key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "cancel run")),
-		Back:      key.NewBinding(key.WithKeys("esc")),
-		Quit:      key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
-		ForceQuit: key.NewBinding(key.WithKeys("ctrl+c")),
+		Up:         key.NewBinding(key.WithKeys("up", "k", "w"), key.WithHelp("↑/↓", "select")),
+		Down:       key.NewBinding(key.WithKeys("down", "j", "s")),
+		Left:       key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←", "back")),
+		Right:      key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→", "details")),
+		Open:       key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "output")),
+		OpenPR:     key.NewBinding(key.WithKeys("o", "super+enter")),
+		Copy:       key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "copy failure")),
+		CopyBranch: key.NewBinding(key.WithKeys("b"), key.WithHelp("b/p", "copy branch/PR")),
+		CopyPR:     key.NewBinding(key.WithKeys("p")),
+		Toggle:     key.NewBinding(key.WithKeys("space"), key.WithHelp("Space", "toggle")),
+		Search:     key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search runs")),
+		Keep:       key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "keep filter")),
+		Clear:      key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "clear")),
+		Details:    key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "infra")),
+		Cancel:     key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "cancel run")),
+		Back:       key.NewBinding(key.WithKeys("esc")),
+		Quit:       key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
+		ForceQuit:  key.NewBinding(key.WithKeys("ctrl+c")),
 	}
 	k.Search.SetEnabled(!right && len(m.allRuns) > 0)
 	k.Keep.SetEnabled(m.searching)
 	k.Clear.SetEnabled(m.searching)
 	k.Left.SetEnabled(right)
 	k.Right.SetEnabled(!right)
-	k.Open.SetEnabled(right)
+	item := m.selectedRunItem()
+	onPR := right && item != nil && item.kind == itemPR
+	onBranch := right && item != nil && item.kind == itemBranch
+	// Enter on the branch has nothing to do, so it is not offered there.
+	k.Open.SetEnabled(right && !onBranch)
+	k.OpenPR.SetEnabled(right && run != nil && run.s.Factory != nil && run.s.Factory.PullRequest.Opened())
 	k.Copy.SetEnabled(right && run != nil)
+	factory := run != nil && run.s.Factory != nil
+	hasPR := factory && run.s.Factory.PullRequest.Opened()
+	k.CopyBranch.SetEnabled(factory && run.s.Factory.Branch != "")
+	k.CopyPR.SetEnabled(hasPR)
+	switch {
+	case onPR:
+		hint := "Enter/o"
+		if m.superEnter {
+			hint = "Enter/⌘Enter/o"
+		}
+		k.Open.SetHelp(hint, "open")
+		k.Copy.SetHelp("c", "copy URL")
+	case onBranch:
+		k.Copy.SetHelp("c", "copy branch")
+	}
 	k.Toggle.SetEnabled(right)
 	// A run with nothing under infra yet (it failed before its worktree was
 	// made, say) draws no infra row, so i would do nothing.
@@ -72,7 +102,7 @@ func (m Model) keys() keyMap {
 	}
 	if m.searching {
 		// Typing goes to the search, so no other key does anything.
-		for _, b := range []*key.Binding{&k.Up, &k.Down, &k.Left, &k.Right, &k.Open, &k.Copy, &k.Toggle, &k.Search, &k.Details, &k.Cancel, &k.Quit} {
+		for _, b := range []*key.Binding{&k.Up, &k.Down, &k.Left, &k.Right, &k.Open, &k.OpenPR, &k.Copy, &k.CopyBranch, &k.CopyPR, &k.Toggle, &k.Search, &k.Details, &k.Cancel, &k.Quit} {
 			b.SetEnabled(false)
 		}
 	}
@@ -81,7 +111,7 @@ func (m Model) keys() keyMap {
 
 // ShortHelp is the footer's hints, in the order they are shown.
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Keep, k.Clear, k.Up, k.Right, k.Open, k.Copy, k.Toggle, k.Search, k.Details, k.Cancel, k.Left, k.Quit}
+	return []key.Binding{k.Keep, k.Clear, k.Up, k.Right, k.Open, k.Copy, k.CopyBranch, k.Toggle, k.Search, k.Details, k.Cancel, k.Left, k.Quit}
 }
 
 // FullHelp satisfies help.KeyMap; the dashboard only shows the short form.
